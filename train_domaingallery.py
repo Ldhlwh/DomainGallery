@@ -114,7 +114,6 @@ def parse_args(input_args=None):
     parser.add_argument("--use_8bit_adam", action = "store_true", help = "Whether or not to use 8-bit Adam from bitsandbytes.")
     parser.add_argument("--gradient_accumulation_steps", type = int, default = 1, help = "Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--gradient_checkpointing", action = "store_true", help = "Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.")
-    parser.add_argument("--mixed_precision", type = str, default = None, choices = ["no", "fp16", "bf16"], help = "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config.")
     parser.add_argument("--enable_xformers_memory_efficient_attention", action = "store_true", help = "Whether or not to use xformers.")
     parser.add_argument("--pre_compute_text_embeddings", action = "store_true", help = "Whether or not to pre-compute text embeddings. If text embeddings are pre-computed, the text encoder will not be kept in memory during training and will leave more GPU memory available for training the rest of the model. This is not compatible with `--train_text_encoder`.")
 
@@ -150,8 +149,11 @@ def parse_args(input_args=None):
 
     if args.source_data_dir is None:
         raise ValueError("You must specify a source data directory.")
-    if args.mode == 'prior_attribute_erasure' and args.target_data_dir is not None:
-        warnings.warn(f"You need not use --target_data_dir for mode {args.mode}.")
+    if args.mode == 'prior_attribute_erasure':
+        if args.target_data_dir is not None:
+            warnings.warn(f"You need not use --target_data_dir for mode {args.mode}.")
+        if args.target_prompt is None and args.erasure_loss_weight > 0.0:
+            raise ValueError(f"You must specify a target prompt if erasing prior attributes.")
     if args.mode == 'finetuning' and args.target_data_dir is None:
         raise ValueError(f"You must specify a target data directory for mode {args.mode}.")
 
@@ -164,7 +166,7 @@ def parse_args(input_args=None):
         warnings.warn(f'You did not specify the pretrained LoRA module where the prior attributes have been pre-erased. Will start from default initialization.')
 
     if args.validation_prompt is None:
-        args.validation_prompt = args.source_prompt if args.mode == 'prior_attribute_erasure' else args.target_prompt
+        args.validation_prompt = args.target_prompt
 
     return args
 
@@ -684,12 +686,18 @@ def main(args):
                     model_pred_src = model_pred
                     target_src = target
                     noisy_model_input_src = noisy_model_input
-                    encoder_hidden_state_src = encoder_hidden_states
+                    encoder_hidden_states_src = encoder_hidden_states
+                    if args.pre_compute_text_embeddings:
+                        encoder_hidden_states_tgt = pre_computed_target_prompt_encoder_hidden_states.repeat(bsz, 1, 1)
+                    else:
+                        encoder_hidden_states_tgt = compute_text_embeddings(args.target_prompt).repeat(bsz, 1, 1)
+                    timesteps_src = timesteps
                 elif args.mode == 'finetuning':
                     model_pred_tgt, model_pred_src = torch.chunk(model_pred, 2, dim = 0)
                     target_tgt, target_src = torch.chunk(target, 2, dim = 0)
-                    noisy_model_input_tgt, noisy_model_input_src = torch.chunk(noisy_model_input, 2, dim = 0)
+                    _, noisy_model_input_src = torch.chunk(noisy_model_input, 2, dim = 0)
                     encoder_hidden_states_tgt, encoder_hidden_states_src = torch.chunk(encoder_hidden_states, 2, dim = 0)
+                    _, timesteps_src = torch.chunk(timesteps, 2, dim = 0)
 
                 # target loss & prior preservation loss
                 if args.mode == 'prior_attribute_erasure':
@@ -702,7 +710,7 @@ def main(args):
 
                 # prior attribute erasure loss (prior_attribute_erasure only)
                 if args.mode == 'prior_attribute_erasure' and args.erasure_loss_weight > 0.0:
-                    model_pred_s2t = unet(noisy_model_input_src, torch.chunk(timesteps, 2, dim = 0)[-1], encoder_hidden_states_tgt, class_labels = class_labels, return_dict = False)[0]
+                    model_pred_s2t = unet(noisy_model_input_src, timesteps_src, encoder_hidden_states_tgt, class_labels = class_labels, return_dict = False)[0]
                     erasure_loss = F.mse_loss(model_pred_s2t.float(), model_pred_src.float().detach(), reduction = "mean")
                     loss = loss + args.erasure_loss_weight * erasure_loss
                 
@@ -710,7 +718,7 @@ def main(args):
                 if args.disen_loss_weight > 0.0:
                     with torch.no_grad():
                         unet.disable_adapters()
-                        model_pred_src_wo_lora = unet(noisy_model_input_src, torch.chunk(timesteps, 2, dim = 0)[-1], encoder_hidden_states_src, class_labels = class_labels, return_dict = False)[0]
+                        model_pred_src_wo_lora = unet(noisy_model_input_src, timesteps_src, encoder_hidden_states_src, class_labels = class_labels, return_dict = False)[0]
                         unet.enable_adapters()
                     disen_loss = F.mse_loss(model_pred_src.float(), model_pred_src_wo_lora.float().detach(), reduction = "mean")
                     loss = loss + args.disen_loss_weight * disen_loss
@@ -772,7 +780,7 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-                    if args.validation_prompt is not None and global_step >= args.start_validation_steps and global_step % args.validation_steps == 0:
+                    if args.validation_prompt is not None and (global_step == 1 or (global_step >= args.start_validation_steps and global_step % args.validation_steps == 0)):
                         pipeline = DiffusionPipeline.from_pretrained(
                             args.pretrained_model_name_or_path,
                             unet = unwrap_model(unet),
