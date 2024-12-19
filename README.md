@@ -5,7 +5,7 @@
 This repository is the official implementation of the following paper:
 
 > **DomainGallery: Few-shot Domain-driven Image Generation by Attribute-centric Finetuning**<br>
-> [Yuxuan Duan](https://github.com/Ldhlwh), [Yan Hong](https://github.com/hy-zpg), [Bo Zhang](https://bo-zhang-cs.github.io/), Jun Lan, Huijia Zhu, Weiqiang Wang, [Jianfu Zhang](http://www.qingyuan.sjtu.edu.cn/a/Jianfu-Zhang.html), [Li Niu](http://www.ustcnewly.com/), [Liqing Zhang](https://bcmi.sjtu.edu.cn/~zhangliqing/)<br>
+> [Yuxuan Duan](https://ldhlwh.github.io/), [Yan Hong](https://github.com/hy-zpg), [Bo Zhang](https://bo-zhang-cs.github.io/), Jun Lan, Huijia Zhu, Weiqiang Wang, [Jianfu Zhang](http://www.qingyuan.sjtu.edu.cn/a/Jianfu-Zhang.html), [Li Niu](http://www.ustcnewly.com/), [Liqing Zhang](https://bcmi.sjtu.edu.cn/~zhangliqing/)<br>
 > The Thirty-Eighth Annual Conference on Neural Information Processing Systems (NeurIPS 2024)<br>
 > [![Arxiv](https://img.shields.io/badge/arXiv-2411.04571-b31b1b)](https://arxiv.org/abs/2411.04571)
 
